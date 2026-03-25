@@ -1,78 +1,65 @@
-# Flask MCP-Style Sample Server (Dockerized)
+# MCP-Compliant Sample Server (Dockerized, Azure-ready)
 
-This project provides a lightweight Flask API server that is ready to run in Docker and host on **Azure Container Apps**.
+This repository now contains a **real MCP server** (Model Context Protocol) built with the official Python MCP SDK (`FastMCP`).
 
-## Endpoints
+It is designed for remote hosting on **Azure Container Apps** using **Streamable HTTP** transport.
 
-1. **IFSC Search (sample)**
-   - `GET /api/v1/ifsc/<ifsc_code>`
-   - Returns the same sample bank details for any IFSC.
-   - Echoes back the requested IFSC in `requested_ifsc`.
+## Exposed MCP Tools
 
-2. **Sample FX Quote**
-   - `POST /api/v1/fx-quote`
-   - Accepts JSON: `base_currency`, `quote_currency`, `amount`
-   - Returns a deterministic sample conversion quote.
+1. `search_ifsc`
+   - Input: `ifsc_code: string`
+   - Behavior: Always returns the same sample bank details and echoes `requested_ifsc`.
 
-3. **Health**
-   - `GET /health`
+2. `sample_fx_quote`
+   - Input: `amount?: number`, `base_currency?: string`, `quote_currency?: string`
+   - Behavior: Returns a deterministic sample FX quote payload.
 
-## Run locally
+## Run locally (MCP over HTTP)
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python app.py
+python mcp_server.py
 ```
 
-Server starts on `http://localhost:8000`.
+Default server URL: `http://localhost:8000/mcp`
 
 ## Docker
 
-Build and run:
-
 ```bash
-docker build -t flask-mcp-server:latest .
-docker run --rm -p 8000:8000 flask-mcp-server:latest
+docker build -t ifsc-fx-mcp:latest .
+docker run --rm -p 8000:8000 ifsc-fx-mcp:latest
 ```
+
+The container starts the MCP server in `streamable-http` mode.
 
 ## Azure Container Apps deployment
 
-Example using Azure CLI (replace names as needed):
-
 ```bash
-# Variables
 RESOURCE_GROUP=rg-mcp-demo
 LOCATION=eastus
 ACR_NAME=mcpdemoacr123
 ENV_NAME=mcp-env
-APP_NAME=flask-mcp-server
-IMAGE_NAME=flask-mcp-server
+APP_NAME=ifsc-fx-mcp-server
+IMAGE_NAME=ifsc-fx-mcp-server
 TAG=v1
 
-# Login
 az login
-
-# Resource group
 az group create --name $RESOURCE_GROUP --location $LOCATION
 
-# ACR
 az acr create --resource-group $RESOURCE_GROUP --name $ACR_NAME --sku Basic
 az acr login --name $ACR_NAME
 
-# Build + push image
 ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
 docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$TAG .
 docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:$TAG
 
-# Container Apps environment
 az containerapp env create \
   --name $ENV_NAME \
   --resource-group $RESOURCE_GROUP \
   --location $LOCATION
 
-# Create app
 az containerapp create \
   --name $APP_NAME \
   --resource-group $RESOURCE_GROUP \
@@ -80,17 +67,40 @@ az containerapp create \
   --image $ACR_LOGIN_SERVER/$IMAGE_NAME:$TAG \
   --target-port 8000 \
   --ingress external \
-  --registry-server $ACR_LOGIN_SERVER
+  --registry-server $ACR_LOGIN_SERVER \
+  --env-vars MCP_TRANSPORT=streamable-http
 ```
 
-## Sample requests
+After deployment, your MCP endpoint is:
+
+`https://<your-container-app-domain>/mcp`
+
+## Testing the MCP server
+
+### Option A: MCP Inspector
 
 ```bash
-curl http://localhost:8000/api/v1/ifsc/SBIN0000123
+npx -y @modelcontextprotocol/inspector
 ```
 
-```bash
-curl -X POST http://localhost:8000/api/v1/fx-quote \
-  -H "Content-Type: application/json" \
-  -d '{"base_currency":"USD", "quote_currency":"INR", "amount":100}'
-```
+Then connect to:
+- Transport: Streamable HTTP
+- URL: `http://localhost:8000/mcp` (or your Azure URL)
+
+### Option B: Any MCP client
+
+Use any MCP-compatible client and point it to your `/mcp` URL.
+
+## Access from OpenAI
+
+To use this with OpenAI-powered apps, use an MCP-capable OpenAI integration path (for example, an OpenAI app/agent runtime that supports remote MCP servers), then register your MCP URL:
+
+- Local: `http://localhost:8000/mcp`
+- Azure: `https://<your-container-app-domain>/mcp`
+
+Once connected, the client will discover the tools (`search_ifsc`, `sample_fx_quote`) via `tools/list` and invoke them via `tools/call`.
+
+## Notes
+
+- This is now MCP protocol-native, not plain REST.
+- The responses are deterministic and intended for integration testing/demo use.
